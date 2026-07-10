@@ -117,13 +117,21 @@ std::vector<SearchResultEntry> FileIndex::search(
                         addResult(e, 60);
                 }
 
-            // 阶段 4: 拼音匹配
-            for (const auto& [py, paths] : m_pinyinIndex)
-                if (py.find(q) != std::wstring::npos)
+            // 阶段 4: 拼音匹配（精确 85 > 前缀 70 > 包含 40）
+            for (const auto& [py, paths] : m_pinyinIndex) {
+                std::wstring pc = py;
+                size_t d = pc.rfind(L'.');
+                if (d != std::wstring::npos) pc = pc.substr(0, d);
+                int ps = 0;
+                if (pc == q) ps = 85;
+                else if (pc.find(q) == 0) ps = 70;
+                else if (pc.find(q) != std::wstring::npos) ps = 40;
+                if (ps > 0)
                     for (const auto& path : paths) {
                         auto it = m_pathIndex.find(path);
-                        if (it != m_pathIndex.end()) addResult(it->second, 40);
+                        if (it != m_pathIndex.end()) addResult(it->second, ps);
                     }
+            }
 
             // 阶段 5: 路径匹配
             for (const auto& [path, entry] : m_pathIndex)
@@ -145,16 +153,66 @@ done:
 std::vector<SearchResultEntry> FileIndex::getAll(int maxResults) { return search(L"", L"", maxResults); }
 int FileIndex::count() const { std::lock_guard<std::mutex> lock(m_mutex); return (int)m_pathIndex.size(); }
 
+// 运行时拼音缓存
+static std::unordered_map<wchar_t, wchar_t>& pinyinRuntimeCache() {
+    static std::unordered_map<wchar_t, wchar_t> c; return c;
+}
+
 std::wstring FileIndex::nameToPinyin(const std::wstring& name)
 {
+    // 去掉扩展名（拼音只对主文件名有意义）
+    std::wstring stem = name;
+    size_t dot = stem.rfind(L'.');
+    if (dot != std::wstring::npos && dot > 0) stem = stem.substr(0, dot);
+    // 高频字符回退表（mini-pinyin 未覆盖的常用汉字）
+    static const struct { wchar_t cp; wchar_t py; } kMap[] = {
+        {0x5FAE,L'w'},{0x4FE1,L'x'},{0x7F51,L'w'},{0x6613,L'y'},{0x4E91,L'y'},{0x97F3,L'y'},{0x4E50,L'y'},
+        {0x5609,L'j'},{0x7ACB,L'l'},{0x521B,L'c'},{0x8BBE,L's'},{0x7F6E,L'z'},{0x626B,L's'},{0x63CF,L'm'},
+        {0x76EE,L'm'},{0x5F55,L'l'},{0x72B6,L'z'},{0x6001,L't'},{0x52A8,L'd'},{0x753B,L'h'},{0x901F,L's'},
+        {0x5EA6,L'd'},{0x9AD8,L'g'},{0x4EAE,L'l'},{0x5149,L'g'},{0x6807,L'b'},{0x8FD4,L'f'},{0x56DE,L'h'},
+        {0x9009,L'x'},{0x62E9,L'z'},{0x8FDB,L'j'},{0x5165,L'r'},{0x6587,L'w'},{0x4EF6,L'j'},{0x8DEF,L'l'},
+        {0x5F84,L'j'},{0x5B58,L'c'},{0x50A8,L'c'},{0x7F16,L'b'},{0x8F91,L'j'},{0x5220,L's'},{0x9664,L'c'},
+        {0x65B0,L'x'},{0x5EFA,L'j'},{0x4FEE,L'x'},{0x6539,L'g'},{0x91CD,L'z'},{0x4E2D,L'z'},{0x56FD,L'g'},
+        {0x5927,L'd'},{0x5C0F,L'x'},{0x591A,L'd'},{0x5C11,L's'},{0x4E0A,L's'},{0x4E0B,L'x'},{0x5DE6,L'z'},
+        {0x53F3,L'y'},{0x786E,L'q'},{0x8BA4,L'r'},{0x53D6,L'q'},{0x6253,L'd'},{0x5F00,L'k'},{0x5173,L'g'},
+        {0x5176,L'q'},{0x4ED6,L't'},{0x4EEC,L'm'},{0x6211,L'w'},{0x4F60,L'n'},{0x597D,L'h'},{0x5427,L'b'},
+        {0x5417,L'm'},{0x4E0D,L'b'},{0x662F,L's'},{0x7684,L'd'},{0x4E86,L'l'},{0x4E48,L'm'},{0x4E2A,L'g'},
+        {0x548C,L'h'},{0x5C31,L'j'},{0x4E5F,L'y'},{0x8FD8,L'h'},{0x8981,L'y'},{0x6709,L'y'},{0x6CA1,L'm'},
+        {0x4EBA,L'r'},{0x5728,L'z'},{0x5230,L'd'},{0x53BB,L'q'},{0x6765,L'l'},{0x8BF4,L's'},{0x770B,L'k'},
+        {0x542C,L't'},{0x5199,L'x'},{0x8BFB,L'd'},{0x5B66,L'x'},{0x4E60,L'x'},{0x6559,L'j'},{0x4E66,L's'},
+        {0x7535,L'd'},{0x8111,L'n'},{0x6E38,L'y'},{0x620F,L'x'},{0x97F3,L'y'},{0x4E50,L'y'},{0x89C6,L's'},
+        {0x9891,L'p'},{0x56FE,L't'},{0x7247,L'p'},{0x7167,L'z'},{0x673A,L'j'},{0x624B,L's'},
+    };
+    auto fallback = [](wchar_t ch)->wchar_t {
+        int lo=0, hi=(int)(sizeof(kMap)/sizeof(kMap[0]))-1;
+        while(lo<=hi){int m=(lo+hi)/2;if(kMap[m].cp==ch)return kMap[m].py;if(kMap[m].cp<ch)lo=m+1;else hi=m-1;}
+        return 0;
+    };
+
     PinyinDict* dict = pinyin_dict_new();
     if (!dict) return L"";
     std::wstring result;
     for (wchar_t ch : name) {
         if ((ch>='A'&&ch<='Z')||(ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')) { result += towlower(ch); continue; }
+        // 1) 运行时缓存（最优先，O(1) 命中）
+        auto& pc = pinyinRuntimeCache();
+        auto cit = pc.find(ch);
+        if (cit != pc.end()) { result += cit->second; continue; }
+        // 2) mini-pinyin 库
         char buf[16] = {};
         int len = pinyin_first_letter(dict, (unsigned int)ch, buf, sizeof(buf));
-        if (len > 0) result.append(buf, buf + len);
+        if (len > 0) {
+            wchar_t py = (wchar_t)buf[0];
+            result += py;
+            pc[ch] = py;  // 持久化
+            continue;
+        }
+        // 3) 回退表
+        wchar_t py = fallback(ch);
+        if (py) {
+            result += py;
+            pc[ch] = py;  // 持久化
+        }
     }
     pinyin_dict_free(dict);
     return result;
@@ -164,6 +222,31 @@ void FileIndex::clear() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_nameIndex.clear(); m_pathIndex.clear(); m_pinyinIndex.clear();
     m_sortedNames.clear(); m_namesDirty = false; m_nextId = 1;
+}
+
+// ── 运行时拼音缓存 ───────────────────────────────────────────
+
+void FileIndex::loadPinyinCache(const std::string& path) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return;
+    uint32_t n; fread(&n, 4, 1, f);
+    auto& c = pinyinRuntimeCache();
+    for (uint32_t i = 0; i < n && !feof(f); ++i) {
+        uint16_t cp; wchar_t py; fread(&cp,2,1,f); fread(&py,2,1,f);
+        c[(wchar_t)cp] = py;
+    }
+    fclose(f);
+    printf("[Pinyin] loaded %u entries\n", n);
+}
+void FileIndex::savePinyinCache(const std::string& path) const {
+    auto& c = pinyinRuntimeCache();
+    if (c.empty()) return;
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return;
+    uint32_t n = (uint32_t)c.size(); fwrite(&n, 4, 1, f);
+    for (const auto& [cp, py] : c) { fwrite(&cp,2,1,f); fwrite(&py,2,1,f); }
+    fclose(f);
+    printf("[Pinyin] saved %u entries\n", n);
 }
 
 void FileIndex::rebuildSortedNames() {

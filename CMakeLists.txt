@@ -24,6 +24,15 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # =========================================================================
+# Static linking (no external DLLs needed)
+# =========================================================================
+if(MINGW)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES .a .dll.a)
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+endif()
+
+# =========================================================================
 # Global compile options
 # =========================================================================
 if(MSVC)

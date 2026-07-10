@@ -66,6 +66,7 @@ bool Application::init()
 
     m_fileIndex = std::make_unique<FileIndex>();
     m_fileIndex->loadFromFile(m_cachePath);
+    m_fileIndex->loadPinyinCache(m_cachePath.substr(0, m_cachePath.rfind('.')) + "_pinyin.bin");
 
     m_scanner = std::make_unique<AppScanner>(m_fileIndex.get());
     m_scanner->setSearchDirectories(m_config->getSearchDirs());
@@ -77,7 +78,11 @@ bool Application::init()
         printf("[App] Scan done: %d total=%d\n", r.totalIndexed, m_fileIndex->count());
         m_scanComplete = true; m_scanTotalScanned = r.totalIndexed;
         if (m_uiMgr) m_uiMgr->getSettingsPage()->setScanComplete(m_scanTotalScanned);
-        if (!m_cachePath.empty()) m_fileIndex->saveToFile(m_cachePath);
+        if (!m_cachePath.empty()) {
+            m_fileIndex->saveToFile(m_cachePath);
+            std::string pyc = m_cachePath.substr(0, m_cachePath.rfind('.')) + "_pinyin.bin";
+            m_fileIndex->savePinyinCache(pyc);
+        }
         if (m_windowVisible && m_uiMgr) onSearch(m_pendingQuery);
     });
     m_scanner->startBackgroundScan();
@@ -162,7 +167,11 @@ void Application::shutdown()
     if (m_fileWatcher) { m_fileWatcher->stop(); m_fileWatcher.reset(); }
     m_ime.reset();
     if (m_config) m_config->save();
-    if (m_fileIndex && !m_cachePath.empty()) m_fileIndex->saveToFile(m_cachePath);
+    if (m_fileIndex && !m_cachePath.empty()) {
+        m_fileIndex->saveToFile(m_cachePath);
+        std::string pyc = m_cachePath.substr(0, m_cachePath.rfind('.')) + "_pinyin.bin";
+        m_fileIndex->savePinyinCache(pyc);
+    }
     m_config.reset(); m_scanner.reset(); m_fileIndex.reset();
     m_uiMgr.reset(); m_fontMgr.reset(); m_resMgr.reset();
     m_backend.reset(); m_winMgr.reset();
@@ -189,6 +198,8 @@ int Application::run()
         float delta = std::chrono::duration<float>(now - lastTime).count();
         lastTime = now;
 
+        if (m_scanner) m_scanner->update();
+        if (m_fileWatcher) m_fileWatcher->processChanges();
         if (!m_windowVisible) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); continue; }
 
         // ── 防抖触发异步搜索 ────────────────────────────────────
@@ -228,17 +239,18 @@ int Application::run()
         }
 
         m_uiMgr->update(delta);
-        if (m_scanner) m_scanner->update();
-        if (m_fileWatcher) m_fileWatcher->processChanges();
-
         bool needPaint = m_uiDirty || m_uiMgr->isDirty() || m_uiMgr->getAnimation().hasActive();
+        // 帧率限制：避免快速按键触发过多重绘
+        auto nowNano = std::chrono::steady_clock::now();
+        float msSincePaint = std::chrono::duration<float>(nowNano - m_lastPaintTime).count() * 1000.0f;
+        if (needPaint && msSincePaint < 6.0f) needPaint = false;
+
         if (needPaint) {
             m_backend->beginFrame();
             CommandBuffer cmdBuf;
             { RenderCommand c; RectOp bg;
               bg.pos = glm::vec2(0,0); bg.size = glm::vec2(800,624);
               bg.color = glm::vec4(0.10f,0.10f,0.12f,1); c.op = bg; cmdBuf.add(c); }
-            m_winMgr->paintTitleBar(cmdBuf);
             m_uiMgr->paint(cmdBuf);
             m_uiDirty = false; m_uiMgr->clearDirty();
             m_backend->execute(cmdBuf); m_backend->endFrame(); m_backend->present();
@@ -281,11 +293,10 @@ void Application::onMouse(int btn, int act, int mods) {
     double cx = 0, cy = 0;
     GLFWwindow* w = m_winMgr ? m_winMgr->getGLFWWindow() : nullptr;
     if (w) glfwGetCursorPos(w, &cx, &cy);
-    if (m_winMgr && m_winMgr->onTitleBarMouse(btn, act, cx, cy)) { m_uiDirty = true; return; }
-    if (m_uiMgr) m_uiMgr->onMouseEvent({act == GLFW_PRESS ? MouseEvent::Press : MouseEvent::Release, glm::vec2(0,0), btn});
+    if (m_winMgr) m_winMgr->onWindowDrag(btn, act, cx, cy);
     (void)mods;
 }
-void Application::onCursor(double x, double y) { if (m_winMgr) m_winMgr->onTitleBarCursor(x, y); }
+void Application::onCursor(double x, double y) { if (m_winMgr) m_winMgr->onWindowDragMove(x, y); }
 
 void Application::triggerSearch(const std::wstring& q) {
     m_lastInputTime = std::chrono::steady_clock::now();
@@ -415,10 +426,12 @@ void Application::openSettings() {
 
 void Application::doRescan() {
     if (!m_scanner) return;
+    m_scanner->stop();
     m_fileIndex->clear(); m_scanComplete = false; m_scanTotalScanned = 0;
     if (m_config) m_scanner->setSearchDirectories(m_config->getSearchDirs());
+    if (m_uiMgr && m_uiMgr->getSettingsPage()) m_uiMgr->getSettingsPage()->setScanning(true);
     m_scanner->startBackgroundScan();
-    if (m_uiMgr) { m_uiMgr->setSearchResults({}); m_uiMgr->setStatusText(L"重新扫描..."); m_uiMgr->markDirty(); }
+    if (m_uiMgr) { m_uiMgr->setSearchResults({}); m_uiMgr->setStatusText(L"扫描中..."); m_uiMgr->markDirty(); }
 }
 
 } // namespace geofinder

@@ -58,7 +58,7 @@ endif()
 
 # -- SQLite3 (Sprint 4: IndexDatabase) ----------------------------------------
 find_library(SQLite3_LIBRARY
-    NAMES sqlite3 libsqlite3 sqlite3.dll
+    NAMES sqlite3 libsqlite3
     PATHS "${_msys2_prefix}/lib"
     REQUIRED
 )

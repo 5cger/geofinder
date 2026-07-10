@@ -58,6 +58,8 @@ public:
 
     /// 将文件名转为拼音首字母（如 "网易云音乐" → "wyyyy"）
     static std::wstring nameToPinyin(const std::wstring& name);
+    void loadPinyinCache(const std::string& path);
+    void savePinyinCache(const std::string& path) const;
 
 private:
     // 主索引：小写文件名 → 文件列表

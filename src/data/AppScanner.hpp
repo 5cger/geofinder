@@ -41,14 +41,13 @@ private:
     std::vector<std::string> m_searchDirs;
     std::thread m_scanThread;
     std::atomic<bool> m_scanning{false};
-
+    std::atomic<bool> m_hasPendingResult{false};
     ScanResult m_pendingResult;
-    bool m_hasPendingResult = false;
     ScanCompleteCallback m_completeCb;
     ScanProgressCallback m_progressCb;
 
     void scanWorker();
-    void scanDirectory(const std::wstring& dir, ScanResult& result);
+    void scanSingleDir(const std::wstring& dir, std::vector<std::wstring>& subdirs, ScanResult& result);
 };
 
 } // namespace geofinder

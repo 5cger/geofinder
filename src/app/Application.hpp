@@ -36,11 +36,13 @@ public:
     void shutdown();
 
 private:
-    // 异步搜索
+    // 异步搜索（生成计数避免阻塞）
     std::thread m_searchThread;
     std::mutex m_searchMutex;
     std::vector<SearchResultEntry> m_searchResults;
     bool m_searchDone = false;
+    std::atomic<int> m_searchGeneration{0};
+    int m_lastCompletedGen = 0;
 
     // 状态
     bool m_uiDirty = false;
@@ -54,6 +56,7 @@ private:
 
     // 搜索防抖
     std::chrono::steady_clock::time_point m_lastInputTime;
+    std::chrono::steady_clock::time_point m_lastPaintTime;
     bool m_searchPending = false;
     std::wstring m_pendingQuery;
 

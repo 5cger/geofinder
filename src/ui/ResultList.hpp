@@ -71,7 +71,10 @@ private:
     float m_itemHeight = 44.0f;
     float m_iconSize = 24.0f;
     float m_paddingX = 16.0f;
-    float m_animSpeed = 10.0f;  // 动画速度（可通过 ConfigManager 调整）
+    float m_animSpeed = 10.0f;
+    // 每项独立透明度（新项淡入，旧项保留）
+    std::vector<float> m_itemAlpha;
+    std::vector<std::wstring> m_prevPaths;  // 上次结果路径列表
 };
 
 } // namespace geofinder

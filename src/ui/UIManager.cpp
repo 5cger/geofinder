@@ -65,8 +65,9 @@ void UIManager::update(float delta)
 {
     m_anim.update(delta);
     m_resultList->update(delta);
+    m_settingsPage->update(delta);
     bool cursorChanged = m_inputField->update(delta);
-    if (m_anim.hasActive() || cursorChanged) markDirty();
+    if (m_anim.hasActive() || cursorChanged || m_settingsPage->isAnimating()) markDirty();
 }
 
 // ── 绘制 ──────────────────────────────────────────────────────────
@@ -91,19 +92,26 @@ void UIManager::paint(CommandBuffer& cmdBuf)
 
 bool UIManager::onMouseEvent(const MouseEvent& evt)
 {
-    if (m_currentPage == Page::Settings) return false;
-
+    // 输入框命中 → 获取焦点，阻止拖拽
     if (m_inputField && m_inputField->isVisible() && m_inputField->hitTest(evt.pos)) {
         m_inputField->setFocused(true);
-        return m_inputField->onMouseEvent(evt);
+        return true;  // 输入框不覆盖 onMouseEvent，但命中即处理
     }
+
+    // 结果列表命中
     if (m_resultList && m_resultList->isVisible() && m_resultList->hitTest(evt.pos)) {
         m_inputField->setFocused(false);
         bool handled = m_resultList->onMouseEvent(evt);
         if (handled) markDirty();
-        return handled;
+        return true;  // 无论是否选中项，点击列表区域就不应拖拽
     }
-    return false;
+
+    // 设置页命中
+    if (m_currentPage == Page::Settings && m_settingsPage && m_settingsPage->isVisible()) {
+        if (m_settingsPage->hitTest(evt.pos)) return true;
+    }
+
+    return false;  // 空白背景 → 允许拖拽
 }
 
 bool UIManager::onKeyEvent(const KeyEvent& evt)
@@ -113,28 +121,10 @@ bool UIManager::onKeyEvent(const KeyEvent& evt)
 
     // ── 设置页键盘 ──────────────────────────────────────────
     if (m_currentPage == Page::Settings) {
-        // Enter: 内联输入路径添加
-        if (evt.key == GLFW_KEY_ENTER) {
-            std::wstring text = m_inputField->getText();
-            if (m_settingsPage && !text.empty()) {
-                if (m_settingsPage->handleInput(text)) {
-                    m_inputField->clear();
-                    markDirty();
-                    return true;
-                }
-                // 不是路径 → 传回搜索
-                if (m_searchCb) m_searchCb(text);
-                m_inputField->clear();
-                return true;
-            }
-            return false;
-        }
-        // 其他键转发到 SettingsPage
         if (m_settingsPage && m_settingsPage->onKeyEvent(evt)) {
             markDirty();
             return true;
         }
-        // 字符输入：让 onCharEvent 处理
         return false;
     }
 
@@ -237,14 +227,16 @@ void UIManager::layoutPage()
     float h = m_layout.getWindowSize().y;
 
     if (m_currentPage == Page::Settings) {
-        // InputField 在顶部（用于输入目录路径）
-        float ifH = 50.0f * m_dpiScale;
-        m_inputField->layout(glm::vec2(0, 0), glm::vec2(w, ifH));
-        // SettingsPage 在输入框下方
-        m_settingsPage->layout(glm::vec2(0, ifH), glm::vec2(w, h - ifH));
+        // 设置页：InputField 位置由 SettingsPage paint 控制
+        m_settingsPage->layout(glm::vec2(0, 0), glm::vec2(w, h));
+        // 仅在扫描目录展开时显示输入框（位置由 paint 计算）
+        if (m_settingsPage->isInSection())
+            m_inputField->setVisible(true);
+        else
+            m_inputField->setVisible(false);
     } else {
-        if (m_inputField)
-            m_inputField->layout(glm::vec2(0, 0), glm::vec2(w, 56.0f * m_dpiScale));
+        m_inputField->setVisible(true);
+        m_inputField->layout(glm::vec2(0, 0), glm::vec2(w, 56.0f * m_dpiScale));
         if (m_resultList) {
             float top = m_inputField ? m_inputField->getSize().y : 56.0f * m_dpiScale;
             m_resultList->layout(glm::vec2(0, top), glm::vec2(w, std::max(0.0f, h - top)));

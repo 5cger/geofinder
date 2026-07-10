@@ -18,25 +18,24 @@
 
 ## 构建
 
-### 依赖
+### 依赖（MSYS2 MinGW64）
 
-| 库 | 安装（MSYS2） |
-|----|--------------|
-| GLFW | `pacman -S mingw-w64-x86_64-glfw` |
-| GLEW | `pacman -S mingw-w64-x86_64-glew` |
+| 库 | 安装命令 |
+|----|---------|
+| GLFW (静态) | `pacman -S mingw-w64-x86_64-glfw` |
+| GLEW (静态) | `pacman -S mingw-w64-x86_64-glew` |
 | GLM | `pacman -S mingw-w64-x86_64-glm` |
-| FreeType | `pacman -S mingw-w64-x86_64-freetype` |
-| SQLite3 | `pacman -S mingw-w64-x86_64-sqlite3` |
+| FreeType (静态) | `pacman -S mingw-w64-x86_64-freetype` |
+| SQLite3 (静态) | `pacman -S mingw-w64-x86_64-sqlite3` |
 | nlohmann-json | `pacman -S mingw-w64-x86_64-nlohmann-json` |
 
 ### 编译
 
 ```bash
 build.bat
-# 或手动:
-cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j4
 ```
+
+**静态链接** — Release 模式编译为独立 exe（~4MB），无需任何外部 DLL。
 
 ### 运行
 
