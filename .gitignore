@@ -18,3 +18,6 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.tsv
+.reasonix/
+CLAUDE.md
+prompt.md
