@@ -57,4 +57,4 @@ build/bin/geofinder.exe
 
 ## 许可证
 
-MIT
+GNU General Public License v3.0 (GPLv3)
