@@ -1,0 +1,25 @@
+{
+  "task_id": "20260709-235750-1-stringutils-src-utils-stringutils-hpp-cpp-wstrtoutf8-u",
+  "goal": "基于蓝图完整阅读，以下是实施计划：\r\n\r\n---\r\n\r\n## 完整实施计划\r\n\r\n### 1. 基础加固（当前遗留问题）\r\n\r\n- **StringUtils 统一编码转换** — `src/utils/StringUtils.hpp/.cpp` 集中 `wstrToUtf8`/`utf8ToWstr`，移除各模块中重复的 static 版本\r\n- **单实例检查** — `main.cpp` 中 `CreateMutexW(L\"GeoFinder_SingleInstance\")`，已存在则激活已有窗口并退出\r\n- **DPI 清单** — 创建 `cmake/GeoFinder.manifest`，PerMonitorV2 声明，MSVC 嵌入链接\r\n- **窗口呼出动画** — 热键唤出时 200ms scale+fade ease-out，隐藏时 150ms ease-in。复用已有 `AnimationEngine`\r\n\r\n### 2. 文件监控与增量索引\r\n\r\n- **FileWatcher** — 参考蓝图 §5.15 IOCP 完整实现\r\n  - `CreateIoCompletionPort` 统一端口，每目录一个 Watch\r\n  - `ReadDirectoryChangesW` + 重新投递（`armWatch`）\r\n  - 工作线程 `GetQueuedCompletionStatus` 阻塞等待\r\n  - 主线程 `processChanges()` 推入变更队列\r\n- **AppScanner 集成 FileWatcher** — 扫描目录时调用 `FileWatcher::addWatch()`，变更时增量更新 `FileIndex`\r\n\r\n### 3. IME 中文输入\r\n\r\n- **IMEWrapper** — 参考蓝图 §5.14 IMM32 实现\r\n  - `WM_IME_STARTCOMPOSITION` / `WM_IME_COMPOSITION` / `WM_IME_ENDCOMPOSITION`\r\n  - `ImmGetCompositionStringW` 提取预编辑文本，通过回调传给 `InputField`\r\n  - `ImmSetCompositionWindow` 定位候选窗口到光标位置\r\n  - `WindowManager` 子类化 GLFW 窗口以接收 IME 消息\r\n- **InputField 集成** — 预编辑文本显示为下划线样式，确认后插入 `m_text`\r\n\r\n### 4. 配置系统完善\r\n\r\n- **ConfigManager 扩展** — 添加主题配置（背景色/透明度/强调色/圆角/阴影强度）、热键配置、别名、自定义命令的 JSON 读写\r\n- **ConfigPage 完善** — 参考蓝图 §5.24，内嵌 GLFW 页面的完整设置面板\r\n  - 热键捕获按钮（按下组合键 → 尝试 `RegisterHotKey` 验证冲突）\r\n  - 颜色选择器（RGB 滑块或预设主题）\r\n  - 目录管理（添加/删除/恢复默认）\r\n  - 保存/取消按钮（`config.json` + `.bak`，加载失败回退）\r\n  - 修改后立即预览（通过 `ConfigChangeEvent` 通知 `UIManager`）\r\n\r\n### 5. AppLauncher 应用启动\r\n\r\n- **AppLauncher** — 参考蓝图 §5.23\r\n  - `CreateProcess`：传统 `.exe` 启动\r\n  - `ShellExecuteEx`：支持参数、工作目录、管理员权限（UAC）\r\n  - `IApplicationActivationManager`：UWP 应用（需 `appUserModelId`）\r\n  - 启动后更新 `launch_count` + `last_launched`（用于排序）\r\n\r\n### 6. 视觉效果\r\n\r\n- **RoundedRectOp 渲染** — `OpenGLBackend` 实现圆角矩形绘制（利用 fragment shader 中的 `smoothstep` 或 SDF）\r\n- **ShadowOp + 高斯模糊** — 参考蓝图 §5.25\r\n  - 双 Pass 高斯模糊 shader（`Blur.vert/frag`）\r\n  - 窗口背景阴影效果\r\n\r\n### 7. 日志与崩溃处理\r\n\r\n- **Logger** — 参考蓝图 §5.16\r\n  - 按日期轮转日志文件\r\n  - `LogLevel::Debug/Info/Warn/Error`\r\n  - 将现有 `printf`/`fprintf(stderr)` 替换为 `Logger::info()`/`Logger::error()`\r\n- **CrashHandler** — 参考蓝图 §5.26\r\n  - `SetUnhandledExceptionFilter` 捕获崩溃\r\n  - 自包含写入 `.crash` 文件（含堆栈回溯、寄存器、时间戳）\r\n  - 不依赖 Logger（避免崩溃时 Logger 已损坏）\r\n\r\n### 8. 测试与性能\r\n\r\n- **单元测试** — `tests/` 目录，至少覆盖：\r\n  - `FileIndex` 插入/搜索/去重/持久化\r\n  - `StringUtils` 编码转换边界情况\r\n  - `ConfigManager` 加载/保存/回退/默认值\r\n  - `AppScanner` 目录枚举/文件类型过滤\r\n- **5000 条性能基准** — 搜索 \u003c30ms，内存 \u003c45MB\r\n\r\n---\r\n\r\n### 建议执行顺序\r\n\r\n| 阶段 | 内容 | 预计影响 |\r\n|------|------|---------|\r\n| **立即** | StringUtils 统一 + 单实例 + DPI 清单 | 零风险，纯加固 |\r\n| **高优先** | FileWatcher + 增量索引 | 索引不再需要全量重扫 |\r\n| **高优先** | IMEWrapper + 中文输入 | 核心体验缺失 |\r\n| **中优先** | 配置系统完善 + ConfigPage | 主题/热键可自定义 |\r\n| **中优先** | AppLauncher + RoundedRectOp + ShadowOp | 启动方式完善 + 视觉提升 |\r\n| **低优先** | Logger + CrashHandler + 测试 | 生产稳定性 |\r\n\r\n---\r\n\r\n是否批准此计划，从哪个阶段开始？",
+  "scope": null,
+  "non_goals": null,
+  "allowed_operations": {
+    "write": true,
+    "network": false,
+    "publish": false
+  },
+  "success_criteria": [
+    {
+      "id": "objective_evidence",
+      "description": "The goal outcome is supported by direct evidence, such as inspected code, reproduced behavior, source material, or concrete findings.",
+      "required": true,
+      "evidence_ids": null
+    },
+    {
+      "id": "verification",
+      "description": "The result has relevant verification evidence, such as tests, commands, benchmarks, manual checks, or a documented reason why verification is not applicable.",
+      "required": true,
+      "evidence_ids": null
+    }
+  ]
+}
