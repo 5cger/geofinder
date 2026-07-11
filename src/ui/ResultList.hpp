@@ -25,6 +25,8 @@ public:
     // 结果数据
     void setResults(const std::vector<SearchResultEntry>& results);
     int getResultCount() const { return static_cast<int>(m_results.size()); }
+    /// 内容总高度（条目 + 状态文字），不超过可用区域
+    float getContentHeight() const;
 
     // 选中项
     int getSelectedIndex() const { return m_selectedIndex; }
@@ -37,8 +39,14 @@ public:
     using OnConfirmCallback = std::function<void(int index)>;
     void setOnConfirmCallback(OnConfirmCallback cb) { m_onConfirm = std::move(cb); }
 
+
     // 状态文字
-    void setStatusText(const std::wstring& text) { m_statusText = text; }
+    void setStatusText(const std::wstring& text) {
+        if (m_statusText != text) {
+            m_statusText = text;
+            m_statusRunValid = false;
+        }
+    }
 
     // 动画速度设置
     void setAnimSpeed(float speed) { m_animSpeed = speed; }
@@ -75,6 +83,18 @@ private:
     // 每项独立透明度（新项淡入，旧项保留）
     std::vector<float> m_itemAlpha;
     std::vector<std::wstring> m_prevPaths;  // 上次结果路径列表
+
+    // ── TextRun 缓存（避免每帧重建字形顶点） ──────────────────
+    struct CachedItemRun {
+        std::wstring nameText;
+        std::wstring pathText;
+        FontManager::TextRun nameRun;
+        FontManager::TextRun pathRun;
+    };
+    std::vector<CachedItemRun> m_itemRunCache;
+    std::wstring m_cachedStatusText;
+    FontManager::TextRun m_cachedStatusRun;
+    bool m_statusRunValid = false;
 };
 
 } // namespace geofinder

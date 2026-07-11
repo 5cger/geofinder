@@ -36,13 +36,12 @@ public:
     void shutdown();
 
 private:
-    // 异步搜索（生成计数避免阻塞）
+    // 异步搜索：前台只读共享列表，后台线程写入结果
     std::thread m_searchThread;
-    std::mutex m_searchMutex;
-    std::vector<SearchResultEntry> m_searchResults;
-    bool m_searchDone = false;
-    std::atomic<int> m_searchGeneration{0};
-    int m_lastCompletedGen = 0;
+    std::mutex m_resultMutex;
+    std::vector<SearchResultEntry> m_sharedResults;
+    std::atomic<int> m_resultGeneration{0};
+    int m_displayedGeneration = -1;
 
     // 状态
     bool m_uiDirty = false;
@@ -53,6 +52,8 @@ private:
     float m_windowOpacity = 1.0f;
     bool m_scanComplete = false;
     int m_scanTotalScanned = 0;
+    int m_winW = 800;
+    int m_winH = 600;
 
     // 搜索防抖
     std::chrono::steady_clock::time_point m_lastInputTime;

@@ -174,8 +174,14 @@ void InputField::paint(CommandBuffer& cmdBuf)
 
     if (!displayText.empty() && m_fontMgr) {
         float textMaxW = m_size.x - m_paddingX * 2.0f;
-        auto textRun = m_fontMgr->createTextRun(displayText, m_fontSize,
-                                                  textMaxW, textColor);
+        // ── TextRun 缓存 ─────────────────────────────────────
+        if (!m_runValid || m_cachedText != displayText) {
+            m_cachedRun = m_fontMgr->createTextRun(displayText, m_fontSize,
+                                                    textMaxW, textColor);
+            m_cachedText = displayText;
+            m_runValid = true;
+        }
+        const auto& textRun = m_cachedRun;
         if (textRun.atlasHandle != kInvalidHandle && !textRun.vertices.empty()) {
             float offsetX = m_pos.x + m_paddingX;
             float offsetY = m_pos.y + (m_size.y - m_fontSize) * 0.5f + m_fontSize;

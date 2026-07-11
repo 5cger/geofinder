@@ -65,6 +65,9 @@ public:
     void setDpiScale(float scale);
     float getDpiScale() const { return m_dpiScale; }
 
+    // 窗口大小变更通知（动态 resize 后调用）
+    void notifyWindowResize(float w, float h);
+
     // 动画
     AnimationEngine& getAnimation() { return m_anim; }
 

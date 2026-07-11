@@ -66,6 +66,11 @@ private:
     float m_fontSize = 24.0f;
     float m_paddingX = 16.0f;
     float m_paddingY = 12.0f;
+
+    // ── TextRun 缓存 ──────────────────────────────────────────
+    std::wstring m_cachedText;
+    FontManager::TextRun m_cachedRun;
+    bool m_runValid = false;
 };
 
 } // namespace geofinder

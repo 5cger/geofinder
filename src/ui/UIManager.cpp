@@ -198,6 +198,13 @@ void UIManager::setSettingsRescanCallback(std::function<void()> cb) {
     if (m_settingsPage) m_settingsPage->setOnRescan(std::move(cb));
 }
 
+void UIManager::notifyWindowResize(float w, float h) {
+    m_layout.resize(glm::vec2(w, h), m_dpiScale);
+    m_searchRoot.reset();  // 重建容器
+    layoutPage();
+    markDirty();
+}
+
 // ── 内部辅助 ─────────────────────────────────────────────────────
 
 Widget* UIManager::getActiveRoot()

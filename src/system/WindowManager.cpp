@@ -60,6 +60,13 @@ void WindowManager::show() {
 void WindowManager::hide() { if (m_window) { glfwHideWindow(m_window); m_visible=false; } }
 bool WindowManager::isVisible() const { return m_visible; }
 
+void WindowManager::resize(int w, int h) {
+    if (m_window) {
+        m_width = w; m_height = h;
+        glfwSetWindowSize(m_window, w, h);
+    }
+}
+
 bool WindowManager::onWindowDrag(int btn, int act, double x, double y) {
     if (!m_window || btn != 0) return false;
     if (act == GLFW_PRESS) { m_dragging=true; m_dragStartX=x; m_dragStartY=y; return true; }

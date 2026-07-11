@@ -30,6 +30,7 @@ public:
     void show();
     void hide();
     bool isVisible() const;
+    void resize(int w, int h);
 
     // 窗口拖拽（全窗口可拖拽）
     bool onWindowDrag(int button, int action, double x, double y);

@@ -24,12 +24,12 @@ Application::~Application() = default;
 
 bool Application::init()
 {
-    m_winMgr = std::make_unique<WindowManager>(800, 600, "GeoFinder");
+    m_winMgr = std::make_unique<WindowManager>(800, 450, "GeoFinder");
     if (!m_winMgr->init()) return false;
 
     m_backend = std::make_unique<OpenGLBackend>();
     if (!m_backend->init(m_winMgr->getGLFWWindow())) return false;
-    m_backend->resize(800, 600);
+    m_backend->resize(800, 450);
 
     m_resMgr = std::make_unique<ResourceManager>();
     m_resMgr->setBackend(m_backend.get());
@@ -202,12 +202,38 @@ int Application::run()
         if (m_fileWatcher) m_fileWatcher->processChanges();
         if (!m_windowVisible) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); continue; }
 
-        // ── 防抖触发异步搜索 ────────────────────────────────────
         if (m_searchPending && std::chrono::duration<float>(now - m_lastInputTime).count() >= 0.05f) {
             m_searchPending = false;
             if (m_searchThread.joinable()) m_searchThread.join();
             std::wstring q = m_pendingQuery;
-            m_searchThread = std::thread([this, q]() {
+            int gen = m_resultGeneration.load() + 1;
+            bool scanDone = m_scanComplete;  // 捕获扫描状态
+
+            // ── 第一步：立即过滤已有结果（不闪烁，渐窄） ──────
+            {
+                std::lock_guard<std::mutex> lg(m_resultMutex);
+                if (!m_sharedResults.empty()) {
+                    std::wstring qLow = q;
+                    for (auto& c : qLow) c = towlower(c);
+                    std::vector<SearchResultEntry> filtered;
+                    filtered.reserve(m_sharedResults.size());
+                    for (const auto& r : m_sharedResults) {
+                        std::wstring n = r.name;
+                        for (auto& c : n) c = towlower(c);
+                        if (n.find(qLow) != std::wstring::npos) {
+                            filtered.push_back(r);
+                        }
+                    }
+                    if (filtered.size() != m_sharedResults.size() || !q.empty()) {
+                        m_sharedResults = std::move(filtered);
+                        m_resultGeneration.store(gen++);
+                        m_displayedGeneration = -1; // 强制前台刷新
+                    }
+                }
+            }
+
+            // ── 第二步：后台全量搜索 ──────────────────────────
+            m_searchThread = std::thread([this, q, gen, scanDone]() {
                 std::wstring clean = q, ext;
                 size_t at = clean.find(L'@');
                 if (at != std::wstring::npos) {
@@ -219,16 +245,48 @@ int Application::run()
                     }
                 }
                 auto results = m_fileIndex->search(clean, ext, 500);
-                std::lock_guard<std::mutex> lg(m_searchMutex);
-                m_searchResults = std::move(results); m_searchDone = true;
+                // 空查询时仅显示可执行文件（lnk 优先）
+                if (clean.empty() && ext.empty()) {
+                    auto isApp = [](const std::wstring& n) -> int { // 0=none, 1=lnk, 2=exe
+                        size_t d = n.rfind(L'.');
+                        if (d == std::wstring::npos) return 0;
+                        std::wstring e = n.substr(d);
+                        for (auto& c : e) c = towlower(c);
+                        if (e == L".lnk") return 1;
+                        if (e == L".exe" || e == L".bat" || e == L".cmd") return 2;
+                        return 0;
+                    };
+                    std::vector<SearchResultEntry> lnks, exes;
+                    for (auto& r : results) {
+                        int t = isApp(r.name);
+                        if (!t) t = isApp(r.path);
+                        if (t == 1) lnks.push_back(std::move(r));
+                        else if (t == 2) exes.push_back(std::move(r));
+                    }
+                    results.clear();
+                    results.reserve(lnks.size() + exes.size());
+                    for (auto& r : lnks) results.push_back(std::move(r));
+                    for (auto& r : exes) results.push_back(std::move(r));
+                }
+                // 短暂让步，避免前台 UI 卡顿
+                std::this_thread::yield();
+                std::lock_guard<std::mutex> lg(m_resultMutex);
+                if (m_resultGeneration.load() < gen) {
+                    m_sharedResults = std::move(results);
+                    m_resultGeneration.store(gen);
+                }
             });
         }
 
-        // ── 取回异步搜索结果 ─────────────────────────────────────
-        if (m_searchDone) {
-            m_searchDone = false;
+        // ── 前台读取共享结果列表（无锁等待） ───────────────────
+        int curGen = m_resultGeneration.load();
+        if (curGen != m_displayedGeneration) {
             std::vector<SearchResultEntry> results;
-            { std::lock_guard<std::mutex> lg(m_searchMutex); results = std::move(m_searchResults); }
+            {
+                std::lock_guard<std::mutex> lg(m_resultMutex);
+                results = m_sharedResults;
+            }
+            m_displayedGeneration = curGen;
             onSearchComplete(std::move(results));
         }
 
@@ -240,20 +298,17 @@ int Application::run()
 
         m_uiMgr->update(delta);
         bool needPaint = m_uiDirty || m_uiMgr->isDirty() || m_uiMgr->getAnimation().hasActive();
-        // 帧率限制：避免快速按键触发过多重绘
-        auto nowNano = std::chrono::steady_clock::now();
-        float msSincePaint = std::chrono::duration<float>(nowNano - m_lastPaintTime).count() * 1000.0f;
-        if (needPaint && msSincePaint < 6.0f) needPaint = false;
 
         if (needPaint) {
             m_backend->beginFrame();
             CommandBuffer cmdBuf;
             { RenderCommand c; RectOp bg;
-              bg.pos = glm::vec2(0,0); bg.size = glm::vec2(800,624);
+              bg.pos = glm::vec2(0,0); bg.size = glm::vec2(800,450);
               bg.color = glm::vec4(0.10f,0.10f,0.12f,1); c.op = bg; cmdBuf.add(c); }
             m_uiMgr->paint(cmdBuf);
             m_uiDirty = false; m_uiMgr->clearDirty();
             m_backend->execute(cmdBuf); m_backend->endFrame(); m_backend->present();
+            m_lastPaintTime = std::chrono::steady_clock::now();
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -275,12 +330,18 @@ void Application::onKey(int key, int sc, int act, int mods)
             { m_winMgr->hide(); m_windowVisible = false; }
         return;
     }
-    // Ctrl+O: 在文件管理器打开
     if (key == GLFW_KEY_O && (mods & GLFW_MOD_CONTROL) && m_uiMgr) {
         const auto* sel = m_uiMgr->getSelectedResult();
         if (sel && !sel->path.empty()) {
-            std::wstring cmd = L"/select,\"" + sel->path + L"\"";
-            ShellExecuteW(nullptr, L"open", L"explorer.exe", cmd.c_str(), nullptr, SW_SHOW);
+            // SHOpenFolderAndSelectItems \u4e3b\u8981\u65b9\u5f0f, ShellExecute \u5907\u7528
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(sel->path.c_str(), nullptr, &pidl, 0, nullptr))) {
+                SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+                ILFree(pidl);
+            } else {
+                std::wstring cmd = L"/select,\"" + sel->path + L"\"";
+                ShellExecuteW(nullptr, L"open", L"explorer.exe", cmd.c_str(), nullptr, SW_SHOW);
+            }
         }
         return;
     }
@@ -313,7 +374,7 @@ void Application::onSearchComplete(std::vector<SearchResultEntry> results)
     else if (total == 0)
         wcscpy_s(status, L"未索引到文件 — /rescan 重新扫描 | /add D:\\\\路径");
     else
-        _snwprintf(status, 192, L"已索引 %d 文件 | %d 结果", total, (int)results.size());
+        _snwprintf(status, 192, L"已索引 %d 文件 | %d 结果  ↑↓选择  Enter打开  Ctrl+O定位  Esc退出", total, (int)results.size());
     m_uiMgr->setSearchResults(results);
     m_uiMgr->setStatusText(status);
     m_uiDirty = true;
@@ -360,7 +421,6 @@ void Application::onSearch(const std::wstring& query)
     while (!clean.empty() && clean.front() == L' ') clean.erase(0, 1);
     while (!clean.empty() && clean.back() == L' ') clean.pop_back();
 
-    // 路径导航
     if (clean.size() >= 3 && clean.find(L":\\") != std::wstring::npos) {
         std::wstring dp = clean;
         if (dp.back() != L'\\') dp += L'\\';
@@ -395,6 +455,29 @@ void Application::onSearch(const std::wstring& query)
     }
 
     auto results = m_fileIndex->search(clean, extFilter, 500);
+    // \u7a7a\u67e5\u8be2\u65f6\u4ec5\u663e\u793a\u53ef\u6267\u884c\u6587\u4ef6\uff08lnk \u4f18\u5148\uff09
+    if (clean.empty() && extFilter.empty()) {
+        auto isApp = [](const std::wstring& n) -> int {
+            size_t d = n.rfind(L'.');
+            if (d == std::wstring::npos) return 0;
+            std::wstring e = n.substr(d);
+            for (auto& c : e) c = towlower(c);
+            if (e == L".lnk") return 1;
+            if (e == L".exe" || e == L".bat" || e == L".cmd") return 2;
+            return 0;
+        };
+        std::vector<SearchResultEntry> lnks, exes;
+        for (auto& r : results) {
+            int t = isApp(r.name);
+            if (!t) t = isApp(r.path);
+            if (t == 1) lnks.push_back(std::move(r));
+            else if (t == 2) exes.push_back(std::move(r));
+        }
+        results.clear();
+        results.reserve(lnks.size() + exes.size());
+        for (auto& r : lnks) results.push_back(std::move(r));
+        for (auto& r : exes) results.push_back(std::move(r));
+    }
     int total = m_fileIndex->count();
     wchar_t status[192];
     if (!extFilter.empty() && clean.empty())
@@ -406,7 +489,7 @@ void Application::onSearch(const std::wstring& query)
     else if (total == 0)
         wcscpy_s(status, L"未索引到文件 — /rescan | /add D:\\\\路径");
     else
-        _snwprintf(status, 192, L"%d 文件 | @pdf:", total);
+        _snwprintf(status, 192, L"%d 文件 | @pdf:  ↑↓选择  Enter打开  Ctrl+O定位  Esc退出", total);
     m_uiMgr->setSearchResults(results);
     m_uiMgr->setStatusText(status);
 }

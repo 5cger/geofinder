@@ -419,9 +419,23 @@ void OpenGLBackend::notifyResourceUsed(ResourceHandle /*handle*/)
 void OpenGLBackend::execute(const CommandBuffer& cmds)
 {
     // 参考蓝图 §5.3, §5.4 — 逐条执行命令
-    // TODO(Sprint3): 实现合批优化（batch merging per §5.3）
+    bool scissorActive = false;
+    int lastScX = -1, lastScY = -1, lastScW = -1, lastScH = -1;
     for (const auto& cmd : cmds.getCommands()) {
-        // TODO(Sprint3): glScissor + stencil for ClipOp
+        // ── ClipRect → glScissor（去重：仅变化时调用） ──────────
+        if (std::holds_alternative<ClipRect>(cmd.clip)) {
+            const auto& cr = std::get<ClipRect>(cmd.clip);
+            int sx = cr.x, sy = m_height - cr.y - cr.h, sw = cr.w, sh = cr.h;
+            if (!scissorActive) { glEnable(GL_SCISSOR_TEST); scissorActive = true; }
+            if (sx != lastScX || sy != lastScY || sw != lastScW || sh != lastScH) {
+                glScissor(sx, sy, sw, sh);
+                lastScX = sx; lastScY = sy; lastScW = sw; lastScH = sh;
+            }
+        } else if (scissorActive) {
+            glDisable(GL_SCISSOR_TEST);
+            scissorActive = false;
+            lastScX = lastScY = lastScW = lastScH = -1;
+        }
 
         std::visit([this](const auto& op) {
             using T = std::decay_t<decltype(op)>;
@@ -438,6 +452,8 @@ void OpenGLBackend::execute(const CommandBuffer& cmds)
             // TODO(Sprint12): ShadowOp, RenderTargetOp, ApplyEffectOp
         }, cmd.op);
     }
+    // ── 帧末清理：确保 scissor 关闭 ──────────────────────────
+    if (scissorActive) glDisable(GL_SCISSOR_TEST);
 }
 
 // ── 垃圾回收 ───────────────────────────────────────────────────────────
